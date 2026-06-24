@@ -1,0 +1,1408 @@
+<!DOCTYPE html><!-- v9 -->
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="theme-color" content="#CC0000" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Taller" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="icon.png" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vergara y CIA - Sistema de Gestión</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #000; color: #fff; font-family: Arial, Helvetica, sans-serif; }
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: #000; }
+    ::-webkit-scrollbar-thumb { background: #CC0000; border-radius: 2px; }
+    input[type=date]::-webkit-calendar-picker-indicator,
+    input[type=month]::-webkit-calendar-picker-indicator,
+    input[type=time]::-webkit-calendar-picker-indicator { filter: invert(0.4); }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes fadein { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:none; } }
+    select option { background: #111; color: #fff; }
+    .row-hover:hover { background: #161616 !important; }
+    @media print {
+      header, nav, .no-print { display: none !important; }
+      body { background: #fff !important; color: #000 !important; }
+      .print-area { display: block !important; }
+    }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
+
+const C = {
+  black:"#000000", surface:"#0A0A0A", card:"#111111", cardHov:"#161616",
+  border:"#1E1E1E", borderRed:"#3A0A0A",
+  red:"#CC0000", redBright:"#FF1A1A",
+  white:"#FFFFFF", gray1:"#AAAAAA", gray2:"#666666", gray3:"#333333",
+  green:"#00BB44", yellow:"#DDAA00", blue:"#1A6ECC", purple:"#8B5CF6",
+};
+
+function formatCLP(n) { return "$ " + Number(n||0).toLocaleString("es-CL"); }
+function formatDate(d) { if (!d) return "-"; return new Date(d+"T00:00:00").toLocaleDateString("es-CL"); }
+function diffHours(entry, exit) {
+  if (!entry || !exit) return null;
+  const [eh,em] = entry.split(":").map(Number);
+  const [xh,xm] = exit.split(":").map(Number);
+  const mins = (xh*60+xm) - (eh*60+em);
+  if (mins <= 0) return null;
+  return `${Math.floor(mins/60)}h ${mins%60}m`;
+}
+
+const TIPO_SERVICIO = ["Pintura Completa","Pintura Parcial","Masilla","Desabolladura","Pulido","Preparación","Otro"];
+const CAT_TRABAJO   = ["Bencina","Pintura","Masilla","Materiales","Herramientas","Subcontrato","Otro"];
+const CAT_PERSONAL  = ["Comida","Transporte","Servicios","Arriendo","Salud","Otro"];
+const STORE_KEY     = "taller_v3_data";
+
+// -- LOCAL STORAGE ---------------------------------------------------------
+function localLoad() {
+  try {
+    const d = JSON.parse(localStorage.getItem("taller_v3_data")||"{}");
+    return { trabajos:[], gastos:[], tecnicos:[], presupuestos:[], ...d };
+  } catch { return { trabajos:[], gastos:[], tecnicos:[], presupuestos:[] }; }
+}
+function localSave(data) {
+  try {
+    localStorage.setItem("taller_v3_data", JSON.stringify(data));
+    try { new BroadcastChannel("taller_v3_data").postMessage("u"); } catch {}
+  } catch {}
+}
+
+// -- ICONS ------------------------------------------------------------------
+const Icon = {
+  car:    ()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16"><path d="M5 17H3v-5l2-5h14l2 5v5h-2"/><path d="M5 17a2 2 0 1 0 4 0 2 2 0 0 0-4 0zm10 0a2 2 0 1 0 4 0 2 2 0 0 0-4 0z"/></svg>,
+  money:  ()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/><line x1="12" y1="12" x2="12" y2="16"/><line x1="10" y1="14" x2="14" y2="14"/></svg>,
+  chart:  ()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><line x1="2" y1="20" x2="22" y2="20"/></svg>,
+  plus:   ()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" width="14" height="14"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>,
+  edit:   ()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,
+  trash:  ()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6m4-6v6"/><path d="M9 6V4h6v2"/></svg>,
+  close:  ()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" width="16" height="16"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
+  wrench: ()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>,
+  user:   ()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>,
+  phone:  ()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 13.5a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 2.69h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 10.09a16 16 0 0 0 6 6l1.46-1.46a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>,
+  cal:    ()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>,
+  id:     ()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>,
+  paint:  ()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13"><path d="M19 3H5a2 2 0 0 0-2 2v4a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2z"/><path d="M3 9v9a2 2 0 0 0 2 2h2"/><path d="M21 9v2"/><path d="M12 12v9"/></svg>,
+  team:   ()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
+  doc:    ()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>,
+  clock:  ()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
+  print:  ()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>,
+  eye:    ()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>,
+};
+
+// -- SHARED UI --------------------------------------------------------------
+function Btn({ children, onClick, red, outline }) {
+  const [h,setH]=useState(false);
+  return <button onClick={onClick} onMouseEnter={()=>setH(true)} onMouseLeave={()=>setH(false)}
+    style={{ display:"flex",alignItems:"center",gap:6,padding:"8px 16px",
+      border: red?"none": `1px solid ${h?C.red:C.border}`,
+      background: red?(h?C.redBright:C.red):(h?C.border:"transparent"),
+      color: red?C.white:C.gray1, cursor:"pointer",
+      fontFamily:"Arial,sans-serif",fontSize:11,fontWeight:700,letterSpacing:1.5,transition:"all 0.15s" }}>
+    {children}
+  </button>;
+}
+function IcoBtn({ children, color, onClick, title }) {
+  const [h,setH]=useState(false);
+  return <button onClick={onClick} title={title} onMouseEnter={()=>setH(true)} onMouseLeave={()=>setH(false)}
+    style={{ background:h?color+"33":"transparent", border:`1px solid ${h?color:C.border}`,
+      color, width:28, height:28, cursor:"pointer", display:"flex", alignItems:"center",
+      justifyContent:"center", transition:"all 0.1s" }}>
+    {children}
+  </button>;
+}
+function Empty({ icon, msg }) {
+  return <div style={{ textAlign:"center",padding:"60px 20px",color:C.gray2 }}>
+    <div style={{ opacity:0.25,marginBottom:16,transform:"scale(2.5)",display:"inline-block" }}>{icon}</div>
+    <div style={{ fontSize:11,letterSpacing:2,marginTop:8 }}>{msg.toUpperCase()}</div>
+  </div>;
+}
+const inputSt = () => ({ background:C.card,border:`1px solid ${C.border}`,padding:"8px 12px",
+  color:C.white,fontSize:12,fontFamily:"Arial,sans-serif",outline:"none" });
+const fieldSt = { background:"#000",border:`1px solid ${C.border}`,padding:"9px 12px",
+  color:"#fff",fontSize:13,width:"100%",fontFamily:"Arial,sans-serif",outline:"none" };
+function FSec({ label, children }) {
+  return <div>
+    <div style={{ fontSize:9,color:C.red,letterSpacing:3,marginBottom:10,fontWeight:700,
+      borderBottom:`1px solid ${C.borderRed}`,paddingBottom:6 }}>{label}</div>
+    <div style={{ display:"flex",flexDirection:"column",gap:10 }}>{children}</div>
+  </div>;
+}
+function FRow({ children }) { return <div style={{ display:"flex",gap:10,flexWrap:"wrap" }}>{children}</div>; }
+function FField({ label, val, set, type="text", ph, opts }) {
+  return <div style={{ flex:1,minWidth:130 }}>
+    <div style={{ fontSize:9,color:C.gray2,letterSpacing:2,marginBottom:5,fontWeight:700 }}>{label}</div>
+    {type==="select"
+      ? <select value={val} onChange={e=>set(e.target.value)} style={{ ...fieldSt }}>
+          {ph&&<option value="">{ph}</option>}
+          {(opts||[]).map(([v,l])=><option key={v} value={v}>{l}</option>)}
+        </select>
+      : type==="textarea"
+        ? <textarea value={val} onChange={e=>set(e.target.value)} placeholder={ph} rows={3}
+            style={{ ...fieldSt,resize:"vertical" }}/>
+        : <input type={type} value={val} onChange={e=>set(e.target.value)} placeholder={ph} style={{ ...fieldSt }}/>
+    }
+  </div>;
+}
+function ModalShell({ title, children, onClose, onSave, wide, extraBtn }) {
+  return <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.95)",zIndex:100,
+    display:"flex",alignItems:"center",justifyContent:"center",padding:16 }}>
+    <div style={{ background:C.surface,border:`1px solid ${C.border}`,borderTop:`3px solid ${C.red}`,
+      width:"100%",maxWidth:wide?740:480,maxHeight:"92vh",display:"flex",flexDirection:"column",
+      animation:"fadein 0.15s ease" }}>
+      <div style={{ padding:"16px 22px",borderBottom:`1px solid ${C.border}`,
+        display:"flex",justifyContent:"space-between",alignItems:"center" }}>
+        <span style={{ fontWeight:700,fontSize:12,letterSpacing:3 }}>{title}</span>
+        <button onClick={onClose} style={{ background:"none",border:"none",color:C.gray2,cursor:"pointer",display:"flex" }}><Icon.close/></button>
+      </div>
+      <div style={{ padding:22,overflow:"auto",flex:1,display:"flex",flexDirection:"column",gap:14 }}>{children}</div>
+      <div style={{ padding:"14px 22px",borderTop:`1px solid ${C.border}`,display:"flex",justifyContent:"flex-end",gap:8 }}>
+        {extraBtn}
+        <button onClick={onClose} style={{ padding:"9px 18px",border:`1px solid ${C.border}`,background:"transparent",
+          color:C.gray1,cursor:"pointer",fontFamily:"Arial,sans-serif",fontSize:11,fontWeight:700,letterSpacing:1.5 }}>CANCELAR</button>
+        <button onClick={onSave} style={{ padding:"9px 22px",border:"none",background:C.red,color:C.white,
+          cursor:"pointer",fontFamily:"Arial,sans-serif",fontSize:11,fontWeight:700,letterSpacing:1.5 }}>GUARDAR</button>
+      </div>
+    </div>
+  </div>;
+}
+function StatBar({ label, val, color, sub }) {
+  return <div style={{ background:C.card,padding:"20px 24px",borderLeft:`3px solid ${color}` }}>
+    <div style={{ fontSize:9,color:C.gray2,letterSpacing:2,marginBottom:6 }}>{label}</div>
+    <div style={{ fontSize:28,fontWeight:700,color,lineHeight:1 }}>{val}</div>
+    {sub&&<div style={{ fontSize:11,color:C.gray2,marginTop:6 }}>{sub}</div>}
+  </div>;
+}
+function SectionHeader({ title, action }) {
+  return <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16 }}>
+    <div style={{ display:"flex",alignItems:"center",gap:12 }}>
+      <div style={{ width:3,height:20,background:C.red }}/>
+      <span style={{ fontWeight:700,fontSize:13,letterSpacing:2 }}>{title}</span>
+    </div>
+    {action}
+  </div>;
+}
+
+// -- MODAL TRABAJO ----------------------------------------------------------
+function ModalTrabajo({ trabajo, onSave, onClose }) {
+  const [f,setF]=useState({ patente:"",marca:"",modelo:"",anio:"",codigoColor:"",
+    tipoServicio:"",nroTrabajo:"",estado:"activo",
+    fechaIngreso:new Date().toISOString().split("T")[0],fechaEntrega:"",
+    clienteNombre:"",clienteRut:"",clienteTel:"",
+    totalCobrar:"",abono:"",descripcion:"", ...trabajo });
+  const pend = Math.max(0,Number(f.totalCobrar||0)-Number(f.abono||0));
+  function submit() {
+    if (!f.patente&&!f.clienteNombre){alert("Ingresa patente o nombre del cliente");return;}
+    onSave({...f,pendiente:pend});
+  }
+  return <ModalShell title={f.id?"EDITAR ORDEN":"NUEVA ORDEN DE TRABAJO"} onClose={onClose} onSave={submit} wide>
+    <FSec label="VEHÍCULO">
+      <FRow>
+        <FField label="PATENTE" val={f.patente} set={v=>setF(p=>({...p,patente:v.toUpperCase()}))} ph="BBCC12"/>
+        <FField label="N° ORDEN" val={f.nroTrabajo} set={v=>setF(p=>({...p,nroTrabajo:v}))} ph="T-001"/>
+        <FField label="ESTADO" type="select" val={f.estado} set={v=>setF(p=>({...p,estado:v}))}
+          opts={[["activo","Ingresado"],["proceso","En Proceso"],["listo","Listo"],["entregado","Entregado"]]}/>
+      </FRow>
+      <FRow>
+        <FField label="MARCA" val={f.marca} set={v=>setF(p=>({...p,marca:v}))} ph="Toyota"/>
+        <FField label="MODELO" val={f.modelo} set={v=>setF(p=>({...p,modelo:v}))} ph="Hilux"/>
+        <FField label="AÑO" val={f.anio} set={v=>setF(p=>({...p,anio:v}))} ph="2020"/>
+      </FRow>
+      <FRow>
+        <FField label="CÓDIGO DE COLOR" val={f.codigoColor} set={v=>setF(p=>({...p,codigoColor:v}))} ph="040 / Super White"/>
+        <FField label="TIPO DE SERVICIO" type="select" val={f.tipoServicio} set={v=>setF(p=>({...p,tipoServicio:v}))}
+          opts={TIPO_SERVICIO.map(x=>[x,x])} ph="Seleccionar..."/>
+      </FRow>
+    </FSec>
+    <FSec label="FECHAS">
+      <FRow>
+        <FField label="FECHA INGRESO" type="date" val={f.fechaIngreso} set={v=>setF(p=>({...p,fechaIngreso:v}))}/>
+        <FField label="FECHA ENTREGA ESTIMADA" type="date" val={f.fechaEntrega} set={v=>setF(p=>({...p,fechaEntrega:v}))}/>
+      </FRow>
+    </FSec>
+    <FSec label="DATOS DEL CLIENTE">
+      <FRow>
+        <FField label="NOMBRE COMPLETO" val={f.clienteNombre} set={v=>setF(p=>({...p,clienteNombre:v}))} ph="Juan Pérez González"/>
+        <FField label="RUT" val={f.clienteRut} set={v=>setF(p=>({...p,clienteRut:v}))} ph="12.345.678-9"/>
+        <FField label="TELÉFONO" val={f.clienteTel} set={v=>setF(p=>({...p,clienteTel:v}))} ph="+56 9 1234 5678"/>
+      </FRow>
+    </FSec>
+    <FSec label="COBRO">
+      <FRow>
+        <FField label="TOTAL A COBRAR ($)" type="number" val={f.totalCobrar} set={v=>setF(p=>({...p,totalCobrar:v}))} ph="0"/>
+        <FField label="ABONO ($)" type="number" val={f.abono} set={v=>setF(p=>({...p,abono:v}))} ph="0"/>
+        <div style={{ flex:1 }}>
+          <div style={{ fontSize:9,color:C.gray2,letterSpacing:2,marginBottom:6 }}>SALDO PENDIENTE</div>
+          <div style={{ padding:"9px 12px",background:"#000",border:`2px solid ${C.yellow}`,
+            fontWeight:700,fontSize:20,color:C.yellow }}>{formatCLP(pend)}</div>
+        </div>
+      </FRow>
+      <FField label="OBSERVACIONES" type="textarea" val={f.descripcion} set={v=>setF(p=>({...p,descripcion:v}))} ph="Detalles adicionales..."/>
+    </FSec>
+  </ModalShell>;
+}
+
+// -- MODAL GASTO ------------------------------------------------------------
+function ModalGasto({ gasto, onSave, onClose }) {
+  const [f,setF]=useState({ tipo:"trabajo",categoria:"",descripcion:"",monto:"",frecuencia:"diario",
+    fecha:new Date().toISOString().split("T")[0], ...gasto });
+  const cats = f.tipo==="trabajo"?CAT_TRABAJO:CAT_PERSONAL;
+  return <ModalShell title={f.id?"EDITAR GASTO":"REGISTRAR GASTO"} onClose={onClose} onSave={()=>onSave(f)}>
+    <FRow>
+      <FField label="TIPO" type="select" val={f.tipo} set={v=>setF(p=>({...p,tipo:v,categoria:""}))}
+        opts={[["trabajo","Trabajo / Taller"],["personal","Personal"]]}/>
+      <FField label="CATEGORÍA" type="select" val={f.categoria} set={v=>setF(p=>({...p,categoria:v}))}
+        opts={cats.map(x=>[x,x])} ph="Seleccionar..."/>
+    </FRow>
+    <FRow>
+      <FField label="FRECUENCIA" type="select" val={f.frecuencia} set={v=>setF(p=>({...p,frecuencia:v}))}
+        opts={[["diario","Diario / Puntual"],["mensual","Mensual / Fijo"]]}/>
+      <FField label="FECHA" type="date" val={f.fecha} set={v=>setF(p=>({...p,fecha:v}))}/>
+      <FField label="MONTO ($)" type="number" val={f.monto} set={v=>setF(p=>({...p,monto:v}))} ph="0"/>
+    </FRow>
+    <FField label="DESCRIPCIÓN" val={f.descripcion} set={v=>setF(p=>({...p,descripcion:v}))} ph="Ej: Bencina retiro de repuestos..."/>
+  </ModalShell>;
+}
+
+// -- MODAL TÉCNICO (EXTENDIDO) ----------------------------------------------
+function ModalTecnico({ tecnico, trabajos, onSave, onClose }) {
+  const [f,setF]=useState({
+    nombre:"",especialidad:"",telefono:"",observaciones:"",
+    abonoTecnico:"",asignaciones:[], ...tecnico
+  });
+  function addAsig(){setF(p=>({...p,asignaciones:[...(p.asignaciones||[]),
+    {trabajoId:"",descripcionTrabajo:"",porcentaje:"",tiempoEstimado:"",tiempoReal:"",horaEntrada:"",horaSalida:""}]}))}
+  function updAsig(i,k,v){setF(p=>{const a=[...(p.asignaciones||[])];a[i]={...a[i],[k]:v};return{...p,asignaciones:a};})}
+  function delAsig(i){setF(p=>({...p,asignaciones:(p.asignaciones||[]).filter((_,j)=>j!==i)}))}
+  function calcMonto(a){
+    const tj=trabajos.find(t=>t.id===a.trabajoId);
+    if(!tj)return 0;
+    return(Number(tj.totalCobrar||0)*Number(a.porcentaje||0))/100;
+  }
+  const totalComision=(f.asignaciones||[]).reduce((s,a)=>s+calcMonto(a),0);
+  const saldoPendiente=Math.max(0,totalComision-Number(f.abonoTecnico||0));
+  function submit(){if(!f.nombre.trim()){alert("Ingresa el nombre del técnico");return;}onSave({...f,totalComision,saldoPendiente});}
+  return <ModalShell title={f.id?"EDITAR TÉCNICO":"NUEVO TÉCNICO"} onClose={onClose} onSave={submit} wide>
+    <FSec label="DATOS DEL TÉCNICO">
+      <FRow>
+        <FField label="NOMBRE COMPLETO" val={f.nombre} set={v=>setF(p=>({...p,nombre:v}))} ph="Juan González"/>
+        <FField label="ESPECIALIDAD" val={f.especialidad} set={v=>setF(p=>({...p,especialidad:v}))} ph="Pintura / Masilla..."/>
+        <FField label="TELÉFONO" val={f.telefono} set={v=>setF(p=>({...p,telefono:v}))} ph="+56 9 1234 5678"/>
+      </FRow>
+    </FSec>
+    <FSec label="PAGOS AL TÉCNICO">
+      <FRow>
+        <FField label="ABONO AL TÉCNICO ($)" type="number" val={f.abonoTecnico} set={v=>setF(p=>({...p,abonoTecnico:v}))} ph="0"/>
+        <div style={{ flex:1 }}>
+          <div style={{ fontSize:9,color:C.gray2,letterSpacing:2,marginBottom:6 }}>TOTAL COMISIÓN</div>
+          <div style={{ padding:"9px 12px",background:"#000",border:`1px solid ${C.border}`,fontWeight:700,fontSize:16,color:C.green }}>{formatCLP(totalComision)}</div>
+        </div>
+        <div style={{ flex:1 }}>
+          <div style={{ fontSize:9,color:C.gray2,letterSpacing:2,marginBottom:6 }}>SALDO PENDIENTE</div>
+          <div style={{ padding:"9px 12px",background:"#000",border:`2px solid ${C.yellow}`,fontWeight:700,fontSize:16,color:C.yellow }}>{formatCLP(saldoPendiente)}</div>
+        </div>
+      </FRow>
+    </FSec>
+    <FSec label="TRABAJOS ASIGNADOS">
+      {(f.asignaciones||[]).length===0
+        ? <div style={{ padding:14,background:"#000",border:`1px dashed ${C.border}`,textAlign:"center",fontSize:12,color:C.gray2 }}>Sin trabajos - presiona el botón para agregar</div>
+        : (f.asignaciones||[]).map((a,i)=>{
+            const tj=trabajos.find(t=>t.id===a.trabajoId);
+            const m=calcMonto(a);
+            const horas=diffHours(a.horaEntrada,a.horaSalida);
+            return <div key={i} style={{ background:"#000",border:`1px solid ${C.border}`,padding:14,position:"relative" }}>
+              <div style={{ position:"absolute",top:8,right:8 }}>
+                <IcoBtn color={C.red} onClick={()=>delAsig(i)}><Icon.trash/></IcoBtn>
+              </div>
+              {/* Fila 1: orden, descripción, % , monto */}
+              <FRow>
+                <div style={{ flex:2,minWidth:150 }}>
+                  <div style={{ fontSize:9,color:C.gray2,letterSpacing:2,marginBottom:5,fontWeight:700 }}>ORDEN DE TRABAJO</div>
+                  <select value={a.trabajoId} onChange={e=>updAsig(i,"trabajoId",e.target.value)}
+                    style={{ ...fieldSt }}>
+                    <option value="">Seleccionar trabajo...</option>
+                    {trabajos.map(t=><option key={t.id} value={t.id}>{t.nroTrabajo?`${t.nroTrabajo} - `:""}{t.patente||""} {t.marca} {t.modelo}{t.clienteNombre?` (${t.clienteNombre})`:""}</option>)}
+                  </select>
+                </div>
+                <div style={{ flex:2,minWidth:150 }}>
+                  <div style={{ fontSize:9,color:C.gray2,letterSpacing:2,marginBottom:5,fontWeight:700 }}>QUÉ REALIZÓ</div>
+                  <input value={a.descripcionTrabajo} onChange={e=>updAsig(i,"descripcionTrabajo",e.target.value)}
+                    placeholder="Preparación aleta delantera..." style={{ ...fieldSt }}/>
+                </div>
+                <div style={{ minWidth:80,flexShrink:0 }}>
+                  <div style={{ fontSize:9,color:C.gray2,letterSpacing:2,marginBottom:5,fontWeight:700 }}>% COMISIÓN</div>
+                  <input type="number" min="0" max="100" value={a.porcentaje}
+                    onChange={e=>updAsig(i,"porcentaje",e.target.value)} placeholder="0" style={{ ...fieldSt }}/>
+                </div>
+                <div style={{ minWidth:120,flexShrink:0 }}>
+                  <div style={{ fontSize:9,color:C.gray2,letterSpacing:2,marginBottom:5,fontWeight:700 }}>MONTO CALCULADO</div>
+                  <div style={{ padding:"9px 12px",background:C.surface,border:`2px solid ${C.yellow}`,
+                    fontWeight:700,fontSize:15,color:C.yellow,textAlign:"right" }}>{formatCLP(m)}</div>
+                </div>
+              </FRow>
+              {/* Fila 2: tiempos y horario */}
+              <FRow style={{ marginTop:10 }}>
+                <div style={{ flex:1,minWidth:110 }}>
+                  <div style={{ fontSize:9,color:C.gray2,letterSpacing:2,marginBottom:5,fontWeight:700 }}>TIEMPO ESTIMADO</div>
+                  <input value={a.tiempoEstimado} onChange={e=>updAsig(i,"tiempoEstimado",e.target.value)}
+                    placeholder="Ej: 3 días" style={{ ...fieldSt }}/>
+                </div>
+                <div style={{ flex:1,minWidth:110 }}>
+                  <div style={{ fontSize:9,color:C.gray2,letterSpacing:2,marginBottom:5,fontWeight:700 }}>TIEMPO REAL</div>
+                  <input value={a.tiempoReal} onChange={e=>updAsig(i,"tiempoReal",e.target.value)}
+                    placeholder="Ej: 4 días" style={{ ...fieldSt }}/>
+                </div>
+                <div style={{ flex:1,minWidth:100 }}>
+                  <div style={{ fontSize:9,color:C.gray2,letterSpacing:2,marginBottom:5,fontWeight:700 }}>HORA ENTRADA</div>
+                  <input type="time" value={a.horaEntrada} onChange={e=>updAsig(i,"horaEntrada",e.target.value)} style={{ ...fieldSt }}/>
+                </div>
+                <div style={{ flex:1,minWidth:100 }}>
+                  <div style={{ fontSize:9,color:C.gray2,letterSpacing:2,marginBottom:5,fontWeight:700 }}>HORA SALIDA</div>
+                  <input type="time" value={a.horaSalida} onChange={e=>updAsig(i,"horaSalida",e.target.value)} style={{ ...fieldSt }}/>
+                </div>
+                {horas&&<div style={{ flexShrink:0,alignSelf:"flex-end" }}>
+                  <div style={{ padding:"9px 12px",background:C.surface,border:`1px solid ${C.green}`,
+                    color:C.green,fontSize:12,fontWeight:700,whiteSpace:"nowrap" }}>Jornada: {horas}</div>
+                </div>}
+              </FRow>
+              {tj&&<div style={{ marginTop:8,fontSize:11,color:C.gray2,display:"flex",gap:16,flexWrap:"wrap" }}>
+                <span>Total obra: <b style={{ color:C.gray1 }}>{formatCLP(tj.totalCobrar)}</b></span>
+                {tj.tipoServicio&&<span>Servicio: {tj.tipoServicio}</span>}
+              </div>}
+            </div>;
+          })
+      }
+      <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:4 }}>
+        <button onClick={addAsig} style={{ display:"flex",alignItems:"center",gap:6,padding:"8px 14px",
+          border:`1px dashed ${C.red}`,background:"transparent",color:C.red,
+          cursor:"pointer",fontFamily:"Arial,sans-serif",fontSize:11,fontWeight:700,letterSpacing:1.5 }}>
+          <Icon.plus/> AGREGAR TRABAJO
+        </button>
+        {(f.asignaciones||[]).length>0&&<div style={{ display:"flex",alignItems:"center",gap:12 }}>
+          <span style={{ fontSize:9,color:C.gray2,letterSpacing:2 }}>TOTAL TÉCNICO</span>
+          <span style={{ fontSize:20,fontWeight:700,color:C.yellow }}>{formatCLP(totalComision)}</span>
+        </div>}
+      </div>
+    </FSec>
+    <FSec label="OBSERVACIONES">
+      <FField label="" type="textarea" val={f.observaciones} set={v=>setF(p=>({...p,observaciones:v}))} ph="Notas adicionales sobre el técnico o el trabajo..."/>
+    </FSec>
+  </ModalShell>;
+}
+
+// -- MODAL PRESUPUESTO ------------------------------------------------------
+function generarPDF(p) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit:"mm", format:"a4" });
+  const W = 210, margin = 18, col2 = 110;
+  let y = 0;
+
+  // -- Fondo negro header --
+  doc.setFillColor(0,0,0);
+  doc.rect(0, 0, W, 42, "F");
+
+  // Línea roja
+  doc.setFillColor(204,0,0);
+  doc.rect(0, 42, W, 1.5, "F");
+
+  // Título empresa
+  doc.setTextColor(255,255,255);
+  doc.setFont("helvetica","bold");
+  doc.setFontSize(20);
+  doc.text("VERGARA Y CIA", margin, 16);
+  doc.setFontSize(8);
+  doc.setFont("helvetica","normal");
+  doc.setTextColor(150,150,150);
+  doc.text("SISTEMA DE GESTIÓN", margin, 22);
+
+  // Presupuesto N°
+  doc.setTextColor(255,255,255);
+  doc.setFont("helvetica","bold");
+  doc.setFontSize(13);
+  doc.text(`PRESUPUESTO ${p.nro||""}`, W-margin, 16, { align:"right" });
+  doc.setFont("helvetica","normal");
+  doc.setFontSize(9);
+  doc.setTextColor(150,150,150);
+  doc.text(`Fecha: ${p.fecha||""}`, W-margin, 22, { align:"right" });
+  doc.text(`Válido por: ${p.validez||30} días`, W-margin, 28, { align:"right" });
+
+  // Estado badge
+  const ECOL = { borrador:[150,150,150],enviado:[26,110,204],aprobado:[0,187,68],rechazado:[204,0,0] };
+  const ec = ECOL[p.estado]||[150,150,150];
+  doc.setFillColor(...ec);
+  doc.roundedRect(margin, 28, 28, 8, 2, 2, "F");
+  doc.setTextColor(255,255,255);
+  doc.setFontSize(7);
+  doc.setFont("helvetica","bold");
+  doc.text((p.estado||"").toUpperCase(), margin+14, 33.5, { align:"center" });
+
+  y = 52;
+
+  // -- Datos cliente --
+  doc.setFillColor(17,17,17);
+  doc.rect(margin-2, y-4, W-2*margin+4, 28, "F");
+  doc.setFillColor(204,0,0);
+  doc.rect(margin-2, y-4, 2, 28, "F");
+
+  doc.setTextColor(150,150,150);
+  doc.setFontSize(7);
+  doc.setFont("helvetica","bold");
+  doc.text("DATOS DEL CLIENTE", margin+2, y+1);
+
+  doc.setFont("helvetica","bold");
+  doc.setFontSize(12);
+  doc.setTextColor(255,255,255);
+  doc.text(p.clienteNombre||"-", margin+2, y+9);
+
+  doc.setFont("helvetica","normal");
+  doc.setFontSize(9);
+  doc.setTextColor(180,180,180);
+  if(p.clienteRut) doc.text(`RUT: ${p.clienteRut}`, margin+2, y+15);
+  if(p.clienteTel) doc.text(`Tel: ${p.clienteTel}`, margin+2, y+21);
+
+  // Vehículo (derecha)
+  doc.setTextColor(150,150,150);
+  doc.setFontSize(7);
+  doc.setFont("helvetica","bold");
+  doc.text("VEHÍCULO", col2, y+1);
+  doc.setFont("helvetica","bold");
+  doc.setFontSize(11);
+  doc.setTextColor(255,255,255);
+  const veh = [p.patente, p.marca, p.modelo, p.anio].filter(Boolean).join("  ");
+  doc.text(veh||"-", col2, y+9);
+  doc.setFont("helvetica","normal");
+  doc.setFontSize(9);
+  doc.setTextColor(180,180,180);
+  if(p.codigoColor) doc.text(`Color: ${p.codigoColor}`, col2, y+15);
+
+  y += 34;
+
+  // -- Tabla ítems --
+  // Header tabla
+  doc.setFillColor(204,0,0);
+  doc.rect(margin-2, y, W-2*margin+4, 7, "F");
+  doc.setTextColor(255,255,255);
+  doc.setFontSize(7.5);
+  doc.setFont("helvetica","bold");
+  doc.text("DESCRIPCIÓN", margin+1, y+5);
+  doc.text("CANT.", 138, y+5, { align:"right" });
+  doc.text("PRECIO UNIT.", 162, y+5, { align:"right" });
+  doc.text("TOTAL", W-margin, y+5, { align:"right" });
+  y += 7;
+
+  // Filas
+  const items = p.items||[];
+  items.forEach((it,i)=>{
+    const tot = Number(it.cantidad||0)*Number(it.precioUnit||0);
+    const bg = i%2===0 ? [17,17,17] : [22,22,22];
+    doc.setFillColor(...bg);
+    doc.rect(margin-2, y, W-2*margin+4, 8, "F");
+    doc.setTextColor(220,220,220);
+    doc.setFont("helvetica","normal");
+    doc.setFontSize(9);
+    // truncate long description
+    const desc = it.descripcion||"";
+    doc.text(desc.length>55?desc.substring(0,55)+"...":desc, margin+1, y+5.5);
+    doc.text(String(it.cantidad||0), 138, y+5.5, { align:"right" });
+    doc.setTextColor(180,180,180);
+    doc.text(formatCLP(it.precioUnit), 162, y+5.5, { align:"right" });
+    doc.setTextColor(221,170,0);
+    doc.setFont("helvetica","bold");
+    doc.text(formatCLP(tot), W-margin, y+5.5, { align:"right" });
+    y += 8;
+  });
+
+  if(items.length===0){
+    doc.setFillColor(17,17,17);
+    doc.rect(margin-2, y, W-2*margin+4, 10, "F");
+    doc.setTextColor(100,100,100);
+    doc.setFont("helvetica","normal");
+    doc.setFontSize(9);
+    doc.text("Sin ítems", margin+1, y+7);
+    y+=10;
+  }
+
+  // Línea roja separadora
+  doc.setFillColor(204,0,0);
+  doc.rect(margin-2, y, W-2*margin+4, 0.5, "F");
+  y += 5;
+
+  // Total
+  doc.setFillColor(0,0,0);
+  doc.rect(margin-2, y-2, W-2*margin+4, 14, "F");
+  doc.setTextColor(150,150,150);
+  doc.setFontSize(8);
+  doc.setFont("helvetica","bold");
+  doc.text("TOTAL PRESUPUESTO", W-margin, y+3, { align:"right" });
+  doc.setTextColor(221,170,0);
+  doc.setFontSize(18);
+  doc.text(formatCLP(p.subtotal||0), W-margin, y+11, { align:"right" });
+  y += 18;
+
+  // -- Notas --
+  if(p.notas){
+    doc.setFillColor(17,17,17);
+    doc.rect(margin-2, y, W-2*margin+4, 3, "F");
+    doc.setTextColor(150,150,150);
+    doc.setFontSize(7);
+    doc.setFont("helvetica","bold");
+    doc.text("NOTAS Y CONDICIONES", margin+1, y+2.5);
+    y+=5;
+    doc.setFillColor(17,17,17);
+    const lines = doc.splitTextToSize(p.notas, W-2*margin-4);
+    const hNotas = lines.length*5+6;
+    doc.rect(margin-2, y-2, W-2*margin+4, hNotas, "F");
+    doc.setFillColor(204,0,0);
+    doc.rect(margin-2, y-2, 2, hNotas, "F");
+    doc.setTextColor(180,180,180);
+    doc.setFont("helvetica","normal");
+    doc.setFontSize(8.5);
+    doc.text(lines, margin+2, y+3);
+    y += hNotas+4;
+  }
+
+  // -- Footer --
+  y = Math.max(y, 265);
+  doc.setFillColor(0,0,0);
+  doc.rect(0, y, W, 297-y, "F");
+  doc.setFillColor(204,0,0);
+  doc.rect(0, y, W, 0.5, "F");
+  doc.setTextColor(100,100,100);
+  doc.setFontSize(7.5);
+  doc.setFont("helvetica","normal");
+  doc.text("Presupuesto generado por Vergara y CIA - Sistema de Gestión", W/2, y+7, { align:"center" });
+  doc.text(`Válido por ${p.validez||30} días desde la fecha de emisión`, W/2, y+12, { align:"center" });
+
+  // -- Marca de agua --
+  doc.setGState(new doc.GState({ opacity: 0.06 }));
+  doc.setTextColor(204,0,0);
+  doc.setFont("helvetica","bold");
+  doc.setFontSize(62);
+  doc.text("VERGARA Y CIA", W/2, 297/2 - 10, { align:"center", angle:45 });
+  doc.setFontSize(28);
+  doc.text("SISTEMA DE GESTIÓN", W/2, 297/2 + 20, { align:"center", angle:45 });
+  doc.setGState(new doc.GState({ opacity: 1 }));
+
+  doc.save(`Presupuesto_${p.nro||p.clienteNombre||"taller"}.pdf`);
+}
+
+function ModalPresupuesto({ presupuesto, onSave, onClose }) {
+  const empty = { nro:"",fecha:new Date().toISOString().split("T")[0],clienteNombre:"",clienteRut:"",
+    clienteTel:"",patente:"",marca:"",modelo:"",anio:"",codigoColor:"",
+    items:[],notas:"",validez:"30",estado:"borrador" };
+  const [f,setF]=useState({ ...empty,...presupuesto });
+  function addItem(){setF(p=>({...p,items:[...(p.items||[]),{descripcion:"",cantidad:"1",precioUnit:""}]}))}
+  function updItem(i,k,v){setF(p=>{const it=[...(p.items||[])];it[i]={...it[i],[k]:v};return{...p,items:it};})}
+  function delItem(i){setF(p=>({...p,items:(p.items||[]).filter((_,j)=>j!==i)}))}
+  const subtotal=(f.items||[]).reduce((s,it)=>s+Number(it.cantidad||0)*Number(it.precioUnit||0),0);
+  function submit(){if(!f.clienteNombre&&!f.patente){alert("Ingresa nombre del cliente o patente");return;}onSave({...f,subtotal});}
+  return <ModalShell title={f.id?"EDITAR PRESUPUESTO":"NUEVO PRESUPUESTO"} onClose={onClose} onSave={submit} wide
+    extraBtn={<button onClick={()=>generarPDF(f)} style={{ display:"flex",alignItems:"center",gap:6,padding:"9px 14px",
+      border:`1px solid ${C.red}`,background:"transparent",color:C.red,cursor:"pointer",
+      fontFamily:"Arial,sans-serif",fontSize:11,fontWeight:700,letterSpacing:1.5 }}><Icon.print/> DESCARGAR PDF</button>}>
+    <FSec label="DATOS DEL PRESUPUESTO">
+      <FRow>
+        <FField label="N° PRESUPUESTO" val={f.nro} set={v=>setF(p=>({...p,nro:v}))} ph="P-001"/>
+        <FField label="FECHA" type="date" val={f.fecha} set={v=>setF(p=>({...p,fecha:v}))}/>
+        <FField label="VÁLIDO POR (DÍAS)" type="number" val={f.validez} set={v=>setF(p=>({...p,validez:v}))} ph="30"/>
+        <FField label="ESTADO" type="select" val={f.estado} set={v=>setF(p=>({...p,estado:v}))}
+          opts={[["borrador","Borrador"],["enviado","Enviado"],["aprobado","Aprobado"],["rechazado","Rechazado"]]}/>
+      </FRow>
+    </FSec>
+    <FSec label="CLIENTE">
+      <FRow>
+        <FField label="NOMBRE COMPLETO" val={f.clienteNombre} set={v=>setF(p=>({...p,clienteNombre:v}))} ph="Juan Pérez"/>
+        <FField label="RUT" val={f.clienteRut} set={v=>setF(p=>({...p,clienteRut:v}))} ph="12.345.678-9"/>
+        <FField label="TELÉFONO" val={f.clienteTel} set={v=>setF(p=>({...p,clienteTel:v}))} ph="+56 9 1234 5678"/>
+      </FRow>
+    </FSec>
+    <FSec label="VEHÍCULO">
+      <FRow>
+        <FField label="PATENTE" val={f.patente} set={v=>setF(p=>({...p,patente:v.toUpperCase()}))} ph="BBCC12"/>
+        <FField label="MARCA" val={f.marca} set={v=>setF(p=>({...p,marca:v}))} ph="Toyota"/>
+        <FField label="MODELO" val={f.modelo} set={v=>setF(p=>({...p,modelo:v}))} ph="Hilux"/>
+        <FField label="AÑO" val={f.anio} set={v=>setF(p=>({...p,anio:v}))} ph="2020"/>
+        <FField label="COLOR" val={f.codigoColor} set={v=>setF(p=>({...p,codigoColor:v}))} ph="040 / Blanco"/>
+      </FRow>
+    </FSec>
+    <FSec label="ÍTEMS DEL PRESUPUESTO">
+      {(f.items||[]).length===0
+        ? <div style={{ padding:14,background:"#000",border:`1px dashed ${C.border}`,textAlign:"center",fontSize:12,color:C.gray2 }}>Sin ítems - agrega servicios o materiales</div>
+        : <>
+            <div style={{ display:"grid",gridTemplateColumns:"3fr 1fr 1fr 1fr auto",gap:6,marginBottom:4 }}>
+              {["DESCRIPCIÓN","CANT.","PRECIO UNIT.","TOTAL",""].map(h=><div key={h} style={{ fontSize:9,color:C.gray2,letterSpacing:1.5,fontWeight:700 }}>{h}</div>)}
+            </div>
+            {(f.items||[]).map((it,i)=>{
+              const tot=Number(it.cantidad||0)*Number(it.precioUnit||0);
+              return <div key={i} style={{ display:"grid",gridTemplateColumns:"3fr 1fr 1fr 1fr auto",gap:6,alignItems:"center" }}>
+                <input value={it.descripcion} onChange={e=>updItem(i,"descripcion",e.target.value)}
+                  placeholder="Ej: Pintura capó completo" style={{ ...fieldSt }}/>
+                <input type="number" value={it.cantidad} onChange={e=>updItem(i,"cantidad",e.target.value)}
+                  placeholder="1" style={{ ...fieldSt }}/>
+                <input type="number" value={it.precioUnit} onChange={e=>updItem(i,"precioUnit",e.target.value)}
+                  placeholder="0" style={{ ...fieldSt }}/>
+                <div style={{ padding:"9px 10px",background:C.surface,border:`1px solid ${C.border}`,
+                  color:C.yellow,fontWeight:700,fontSize:13,textAlign:"right" }}>{formatCLP(tot)}</div>
+                <IcoBtn color={C.red} onClick={()=>delItem(i)}><Icon.trash/></IcoBtn>
+              </div>;
+            })}
+          </>
+      }
+      <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:4 }}>
+        <button onClick={addItem} style={{ display:"flex",alignItems:"center",gap:6,padding:"8px 14px",
+          border:`1px dashed ${C.red}`,background:"transparent",color:C.red,
+          cursor:"pointer",fontFamily:"Arial,sans-serif",fontSize:11,fontWeight:700,letterSpacing:1.5 }}>
+          <Icon.plus/> AGREGAR ÍTEM
+        </button>
+        <div style={{ display:"flex",alignItems:"center",gap:14 }}>
+          <span style={{ fontSize:9,color:C.gray2,letterSpacing:2 }}>TOTAL PRESUPUESTO</span>
+          <span style={{ fontSize:22,fontWeight:700,color:C.yellow }}>{formatCLP(subtotal)}</span>
+        </div>
+      </div>
+    </FSec>
+    <FSec label="NOTAS / CONDICIONES">
+      <FField label="" type="textarea" val={f.notas} set={v=>setF(p=>({...p,notas:v}))} ph="Condiciones de pago, garantías, observaciones..."/>
+    </FSec>
+  </ModalShell>;
+}
+
+// -- TABLA GASTOS -----------------------------------------------------------
+function GastoTable({ title, gastos, color, onEdit, onDelete }) {
+  const total=gastos.reduce((a,g)=>a+Number(g.monto||0),0);
+  return <div style={{ border:`1px solid ${C.border}` }}>
+    <div style={{ padding:"12px 18px",background:C.card,borderBottom:`1px solid ${C.border}`,
+      display:"flex",justifyContent:"space-between",alignItems:"center",borderLeft:`3px solid ${color}` }}>
+      <span style={{ fontSize:10,fontWeight:700,letterSpacing:2,color:C.gray1 }}>{title}</span>
+      <span style={{ fontSize:15,fontWeight:700,color }}>{formatCLP(total)}</span>
+    </div>
+    {gastos.length===0
+      ? <div style={{ padding:20,color:C.gray2,fontSize:12,textAlign:"center" }}>Sin registros para este período</div>
+      : <div style={{ overflowX:"auto" }}>
+          <table style={{ width:"100%",borderCollapse:"collapse" }}>
+            <thead><tr style={{ background:C.surface }}>
+              {["FECHA","CATEGORÍA","DESCRIPCIÓN","TIPO","MONTO",""].map(h=>(
+                <th key={h} style={{ padding:"8px 14px",textAlign:"left",fontSize:9,color:C.gray2,
+                  fontWeight:700,letterSpacing:1.5,borderBottom:`1px solid ${C.border}`,whiteSpace:"nowrap" }}>{h}</th>
+              ))}
+            </tr></thead>
+            <tbody>{gastos.map(g=>(
+              <tr key={g.id} className="row-hover" style={{ borderBottom:`1px solid ${C.border}` }}>
+                <td style={{ padding:"10px 14px",fontSize:12,color:C.gray1,whiteSpace:"nowrap" }}>{formatDate(g.fecha)}</td>
+                <td style={{ padding:"10px 14px",fontSize:13,fontWeight:600 }}>{g.categoria}</td>
+                <td style={{ padding:"10px 14px",fontSize:12,color:C.gray1 }}>{g.descripcion||"-"}</td>
+                <td style={{ padding:"10px 14px",whiteSpace:"nowrap" }}>
+                  <span style={{ fontSize:9,fontWeight:700,letterSpacing:1,padding:"3px 8px",
+                    border:`1px solid ${g.frecuencia==="mensual"?C.blue:C.red}`,
+                    color:g.frecuencia==="mensual"?C.blue:C.red }}>
+                    {g.frecuencia==="mensual"?"MENSUAL":"DIARIO"}
+                  </span>
+                </td>
+                <td style={{ padding:"10px 14px",fontWeight:700,fontSize:13,whiteSpace:"nowrap" }}>{formatCLP(g.monto)}</td>
+                <td style={{ padding:"10px 14px" }}>
+                  <div style={{ display:"flex",gap:4 }}>
+                    <IcoBtn color={C.gray1} onClick={()=>onEdit(g)}><Icon.edit/></IcoBtn>
+                    <IcoBtn color={C.red} onClick={()=>onDelete(g.id)}><Icon.trash/></IcoBtn>
+                  </div>
+                </td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+    }
+  </div>;
+}
+
+// -- TARJETA TÉCNICO --------------------------------------------------------
+function TecnicoCard({ tc, trabajos, onEdit, onDelete }) {
+  const [open,setOpen]=useState(false);
+  const asis=(tc.asignaciones||[]);
+  const totalComision=tc.totalComision||asis.reduce((s,a)=>{
+    const tj=trabajos.find(t=>t.id===a.trabajoId);
+    return s+(Number((tj&&tj.totalCobrar)||0)*Number(a.porcentaje||0))/100;
+  },0);
+  const saldo=tc.saldoPendiente!=null?tc.saldoPendiente:totalComision;
+  return <div style={{ background:C.card,borderLeft:`3px solid ${C.red}`,border:`1px solid ${C.border}` }}>
+    <div style={{ display:"flex",alignItems:"stretch" }}>
+      <div onClick={()=>setOpen(!open)} style={{ flex:1,padding:"16px 18px",display:"flex",alignItems:"center",gap:14,cursor:"pointer" }}>
+        <div style={{ width:38,height:38,background:C.red,display:"flex",alignItems:"center",justifyContent:"center",
+          flexShrink:0,fontWeight:700,fontSize:15,color:C.white }}>{(tc.nombre||"?")[0].toUpperCase()}</div>
+        <div>
+          <div style={{ fontSize:15,fontWeight:700 }}>{tc.nombre||"Sin nombre"}</div>
+          <div style={{ fontSize:11,color:C.gray2,marginTop:2 }}>{tc.especialidad||"Sin especialidad"}</div>
+        </div>
+      </div>
+      <div onClick={()=>setOpen(!open)} style={{ padding:"16px 14px",borderLeft:`1px solid ${C.border}`,textAlign:"center",minWidth:90,cursor:"pointer" }}>
+        <div style={{ fontSize:9,color:C.gray2,letterSpacing:1 }}>TRABAJOS</div>
+        <div style={{ fontSize:22,fontWeight:700,color:C.gray1,marginTop:2 }}>{asis.length}</div>
+      </div>
+      <div onClick={()=>setOpen(!open)} style={{ padding:"16px 14px",borderLeft:`1px solid ${C.border}`,textAlign:"right",minWidth:140,cursor:"pointer" }}>
+        <div style={{ fontSize:9,color:C.gray2,letterSpacing:1 }}>COMISIÓN TOTAL</div>
+        <div style={{ fontSize:16,fontWeight:700,color:C.green,marginTop:2 }}>{formatCLP(totalComision)}</div>
+        <div style={{ fontSize:9,color:C.gray2,marginTop:2 }}>Abono: {formatCLP(Number(tc.abonoTecnico||0))}</div>
+      </div>
+      <div onClick={()=>setOpen(!open)} style={{ padding:"16px 14px",borderLeft:`1px solid ${C.border}`,textAlign:"right",minWidth:140,cursor:"pointer" }}>
+        <div style={{ fontSize:9,color:C.gray2,letterSpacing:1 }}>SALDO PENDIENTE</div>
+        <div style={{ fontSize:18,fontWeight:700,color:C.yellow,marginTop:2 }}>{formatCLP(saldo)}</div>
+      </div>
+      <div style={{ padding:"16px 14px",borderLeft:`1px solid ${C.border}`,display:"flex",gap:4,alignItems:"center" }}>
+        <IcoBtn color={C.gray1} onClick={onEdit}><Icon.edit/></IcoBtn>
+        <IcoBtn color={C.red} onClick={onDelete}><Icon.trash/></IcoBtn>
+      </div>
+      <div onClick={()=>setOpen(!open)} style={{ padding:"16px 12px",borderLeft:`1px solid ${C.border}`,
+        color:C.gray2,fontSize:10,cursor:"pointer",display:"flex",alignItems:"center" }}>{open?"^":"v"}</div>
+    </div>
+    {open&&<div style={{ borderTop:`1px solid ${C.border}` }}>
+      {asis.length===0
+        ? <div style={{ padding:"16px 22px",color:C.gray2,fontSize:12 }}>Sin trabajos asignados</div>
+        : <>
+            <div style={{ padding:"8px 18px",background:C.surface,display:"grid",
+              gridTemplateColumns:"2fr 2fr 1fr 1fr 1fr 1fr 1fr",gap:8 }}>
+              {["N° ORDEN","QUÉ REALIZÓ","T.EST.","T.REAL","ENTRADA","SALIDA","MONTO"].map(h=>(
+                <div key={h} style={{ fontSize:9,color:C.gray2,letterSpacing:1,fontWeight:700 }}>{h}</div>
+              ))}
+            </div>
+            {asis.map((a,i)=>{
+              const tj=trabajos.find(t=>t.id===a.trabajoId);
+              const m=(Number((tj&&tj.totalCobrar)||0)*Number(a.porcentaje||0))/100;
+              const horas=diffHours(a.horaEntrada,a.horaSalida);
+              return <div key={i} style={{ padding:"10px 18px",borderTop:`1px solid ${C.border}`,display:"grid",
+                gridTemplateColumns:"2fr 2fr 1fr 1fr 1fr 1fr 1fr",gap:8,alignItems:"center" }}
+                className="row-hover">
+                <div>
+                  <div style={{ fontSize:12,fontWeight:700 }}>{(tj&&tj.nroTrabajo)||"-"}</div>
+                  {tj&&<div style={{ fontSize:10,color:C.gray2 }}>{tj.patente} . {tj.clienteNombre}</div>}
+                </div>
+                <div style={{ fontSize:12 }}>{a.descripcionTrabajo||"-"}</div>
+                <div style={{ fontSize:11,color:C.gray1 }}>{a.tiempoEstimado||"-"}</div>
+                <div style={{ fontSize:11,color:a.tiempoReal&&a.tiempoEstimado&&a.tiempoReal>a.tiempoEstimado?C.red:C.gray1 }}>{a.tiempoReal||"-"}</div>
+                <div style={{ fontSize:11,color:C.gray1 }}>{a.horaEntrada||"-"}</div>
+                <div style={{ fontSize:11,color:C.gray1 }}>{a.horaSalida?`${a.horaSalida}${horas?` (${horas})`:""}`:  "-"}</div>
+                <div style={{ fontSize:13,fontWeight:700,color:C.yellow }}>{formatCLP(m)}</div>
+              </div>;
+            })}
+            <div style={{ padding:"10px 18px",borderTop:`1px solid ${C.border}`,
+              display:"flex",justifyContent:"flex-end",background:C.surface,gap:20,alignItems:"center" }}>
+              <span style={{ fontSize:9,color:C.gray2,letterSpacing:2 }}>TOTAL COMISIÓN</span>
+              <span style={{ fontSize:16,fontWeight:700,color:C.green }}>{formatCLP(totalComision)}</span>
+              <span style={{ fontSize:9,color:C.gray2,letterSpacing:2 }}>SALDO PENDIENTE</span>
+              <span style={{ fontSize:18,fontWeight:700,color:C.yellow }}>{formatCLP(saldo)}</span>
+            </div>
+          </>
+      }
+      {tc.observaciones&&<div style={{ padding:"12px 18px",borderTop:`1px solid ${C.border}`,
+        fontSize:12,color:C.gray1,background:C.surface }}><b style={{ color:C.gray2,fontSize:9,letterSpacing:2 }}>OBSERVACIONES: </b>{tc.observaciones}</div>}
+    </div>}
+  </div>;
+}
+
+// -- CatPanel ---------------------------------------------------------------
+function CatPanel({ title, cats, total, color }) {
+  const items=Object.entries(cats).sort((a,b)=>b[1]-a[1]);
+  return <div style={{ background:C.card,border:`1px solid ${C.border}` }}>
+    <div style={{ padding:"12px 18px",borderBottom:`1px solid ${C.border}`,
+      display:"flex",justifyContent:"space-between",borderLeft:`3px solid ${color}` }}>
+      <span style={{ fontSize:9,fontWeight:700,letterSpacing:2,color:C.gray1 }}>{title}</span>
+      <span style={{ fontWeight:700,color,fontSize:14 }}>{formatCLP(total)}</span>
+    </div>
+    <div style={{ padding:16 }}>
+      {items.length===0
+        ? <div style={{ color:C.gray2,fontSize:12,textAlign:"center",padding:16 }}>Sin datos este período</div>
+        : items.map(([cat,monto])=><div key={cat} style={{ marginBottom:12 }}>
+            <div style={{ display:"flex",justifyContent:"space-between",marginBottom:5,fontSize:12 }}>
+              <span style={{ color:C.gray1 }}>{cat}</span>
+              <span style={{ fontWeight:700 }}>{formatCLP(monto)}</span>
+            </div>
+            <div style={{ height:2,background:C.border }}>
+              <div style={{ height:2,background:color,width:`${total>0?(monto/total)*100:0}%`,transition:"width 0.4s" }}/>
+            </div>
+          </div>)
+      }
+    </div>
+  </div>;
+}
+
+// -- DETALLE TRABAJO --------------------------------------------------------
+function DetalleTrabajo({ t, onClose, onEdit, onDelete }) {
+  const ESTADO={ activo:["INGRESADO",C.red],proceso:["EN PROCESO",C.yellow],listo:["LISTO",C.green],entregado:["ENTREGADO",C.gray2] };
+  const [label,col]=ESTADO[t.estado]||["-",C.gray2];
+  return <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.92)",zIndex:200,
+    display:"flex",alignItems:"center",justifyContent:"center",padding:16 }}>
+    <div style={{ background:C.surface,border:`1px solid ${C.border}`,borderTop:`3px solid ${C.red}`,
+      width:"100%",maxWidth:620,maxHeight:"90vh",overflow:"auto",animation:"fadein 0.15s ease" }}>
+      <div style={{ padding:"18px 24px",borderBottom:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between",alignItems:"center" }}>
+        <div>
+          <div style={{ fontSize:9,color:C.gray2,letterSpacing:3 }}>ORDEN DE TRABAJO</div>
+          <div style={{ fontWeight:700,fontSize:22,letterSpacing:2,marginTop:2 }}>{t.nroTrabajo||t.patente||"SIN NÚMERO"}</div>
+        </div>
+        <div style={{ display:"flex",gap:6 }}>
+          <IcoBtn color={C.gray1} onClick={onEdit}><Icon.edit/></IcoBtn>
+          <IcoBtn color={C.red} onClick={onDelete}><Icon.trash/></IcoBtn>
+          <IcoBtn color={C.gray2} onClick={onClose}><Icon.close/></IcoBtn>
+        </div>
+      </div>
+      <div style={{ padding:24 }}>
+        <div style={{ display:"flex",gap:8,marginBottom:22,flexWrap:"wrap" }}>
+          <span style={{ fontSize:9,fontWeight:700,letterSpacing:2,color:col,border:`1px solid ${col}`,padding:"4px 12px" }}>{label}</span>
+          {t.tipoServicio&&<span style={{ fontSize:9,fontWeight:700,letterSpacing:2,color:C.gray1,border:`1px solid ${C.border}`,padding:"4px 12px" }}>{t.tipoServicio.toUpperCase()}</span>}
+        </div>
+        <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16 }}>
+          {[["Patente",t.patente],["Vehículo",[t.marca,t.modelo,t.anio].filter(Boolean).join(" ")],
+            ["Código Color",t.codigoColor],["Ingreso",formatDate(t.fechaIngreso)],
+            ["Entrega Est.",formatDate(t.fechaEntrega)]].filter(([,v])=>v).map(([l,v])=>(
+            <div key={l}>
+              <div style={{ fontSize:9,color:C.gray2,letterSpacing:1 }}>{l.toUpperCase()}</div>
+              <div style={{ fontSize:13,marginTop:2 }}>{v}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{ height:1,background:C.border,margin:"16px 0" }}/>
+        <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16 }}>
+          {[["Nombre",t.clienteNombre],["RUT",t.clienteRut],["Teléfono",t.clienteTel]].filter(([,v])=>v).map(([l,v])=>(
+            <div key={l}>
+              <div style={{ fontSize:9,color:C.gray2,letterSpacing:1 }}>{l.toUpperCase()}</div>
+              <div style={{ fontSize:13,marginTop:2 }}>{v}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{ height:1,background:C.border,margin:"16px 0" }}/>
+        <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:2 }}>
+          {[["TOTAL",formatCLP(t.totalCobrar),C.gray1],["ABONO",formatCLP(t.abono),C.green],["PENDIENTE",formatCLP(t.pendiente),C.yellow]].map(([l,v,c])=>(
+            <div key={l} style={{ background:"#000",padding:"14px 16px",textAlign:"center",borderLeft:l==="PENDIENTE"?`2px solid ${C.yellow}`:"none" }}>
+              <div style={{ fontSize:9,color:C.gray2,letterSpacing:2 }}>{l}</div>
+              <div style={{ fontWeight:700,fontSize:20,color:c,marginTop:4 }}>{v}</div>
+            </div>
+          ))}
+        </div>
+        {t.descripcion&&<div style={{ marginTop:14,padding:14,background:"#000",borderLeft:`2px solid ${C.border}`,fontSize:13,color:C.gray1 }}>{t.descripcion}</div>}
+      </div>
+    </div>
+  </div>;
+}
+
+// -- VISTA PREVIA PRESUPUESTO -----------------------------------------------
+function VistaPresupuesto({ p, onClose, onEdit }) {
+  const ECOL={ borrador:[C.gray2,"BORRADOR"],enviado:[C.blue,"ENVIADO"],aprobado:[C.green,"APROBADO"],rechazado:[C.red,"RECHAZADO"] };
+  const [ecol,elbl]=ECOL[p.estado]||[C.gray2,"-"];
+  const subtotal=(p.items||[]).reduce((s,it)=>s+Number(it.cantidad||0)*Number(it.precioUnit||0),0);
+
+  return <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.96)",zIndex:200,
+    display:"flex",alignItems:"center",justifyContent:"center",padding:16,overflowY:"auto" }}>
+    <div style={{ width:"100%",maxWidth:720,animation:"fadein 0.15s ease" }}>
+
+      {/* Botones acción */}
+      <div style={{ display:"flex",justifyContent:"flex-end",gap:8,marginBottom:12 }}>
+        <button onClick={()=>generarPDF(p)} style={{ display:"flex",alignItems:"center",gap:6,padding:"8px 16px",
+          border:`1px solid ${C.red}`,background:"transparent",color:C.red,
+          cursor:"pointer",fontFamily:"Arial,sans-serif",fontSize:11,fontWeight:700,letterSpacing:1.5 }}>
+          <Icon.print/> DESCARGAR PDF
+        </button>
+        <button onClick={onEdit} style={{ display:"flex",alignItems:"center",gap:6,padding:"8px 16px",
+          border:`1px solid ${C.border}`,background:"transparent",color:C.gray1,
+          cursor:"pointer",fontFamily:"Arial,sans-serif",fontSize:11,fontWeight:700,letterSpacing:1.5 }}>
+          <Icon.edit/> EDITAR
+        </button>
+        <IcoBtn color={C.gray2} onClick={onClose}><Icon.close/></IcoBtn>
+      </div>
+
+      {/* Documento simulado */}
+      <div style={{ background:"#111",border:`1px solid ${C.border}`,position:"relative",overflow:"hidden" }}>
+
+        {/* Marca de agua */}
+        <div style={{ position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",
+          pointerEvents:"none",transform:"rotate(-45deg)",opacity:0.04,zIndex:0 }}>
+          <div style={{ textAlign:"center" }}>
+            <div style={{ fontSize:60,fontWeight:900,color:C.red,letterSpacing:4,lineHeight:1 }}>VERGARA Y CIA</div>
+            <div style={{ fontSize:24,fontWeight:700,color:C.red,letterSpacing:6,marginTop:8 }}>SISTEMA DE GESTIÓN</div>
+          </div>
+        </div>
+
+        {/* Contenido */}
+        <div style={{ position:"relative",zIndex:1 }}>
+
+          {/* Header negro */}
+          <div style={{ background:"#000",padding:"24px 32px 20px",borderBottom:`3px solid ${C.red}` }}>
+            <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start" }}>
+              <div>
+                <div style={{ fontSize:24,fontWeight:900,letterSpacing:4,color:C.white }}>VERGARA Y CIA</div>
+                <div style={{ fontSize:9,color:C.gray2,letterSpacing:6,marginTop:3 }}>SISTEMA DE GESTIÓN</div>
+              </div>
+              <div style={{ textAlign:"right" }}>
+                <div style={{ fontSize:11,color:C.gray2,letterSpacing:2 }}>PRESUPUESTO</div>
+                <div style={{ fontSize:26,fontWeight:900,color:C.white,marginTop:2 }}>{p.nro||"-"}</div>
+                <div style={{ fontSize:10,color:C.gray2,marginTop:4 }}>Fecha: {formatDate(p.fecha)}</div>
+                <div style={{ fontSize:10,color:C.gray2 }}>Válido por: {p.validez||30} días</div>
+                <span style={{ display:"inline-block",marginTop:6,fontSize:9,fontWeight:700,letterSpacing:2,
+                  color:ecol,border:`1px solid ${ecol}`,padding:"3px 10px" }}>{elbl}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Cliente + Vehículo */}
+          <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:0,borderBottom:`1px solid ${C.border}` }}>
+            <div style={{ padding:"18px 32px",borderRight:`1px solid ${C.border}`,borderLeft:`3px solid ${C.red}` }}>
+              <div style={{ fontSize:8,color:C.gray2,letterSpacing:3,fontWeight:700,marginBottom:8 }}>DATOS DEL CLIENTE</div>
+              <div style={{ fontSize:16,fontWeight:700,color:C.white }}>{p.clienteNombre||"-"}</div>
+              {p.clienteRut&&<div style={{ fontSize:11,color:C.gray2,marginTop:4 }}>RUT: {p.clienteRut}</div>}
+              {p.clienteTel&&<div style={{ fontSize:11,color:C.gray2,marginTop:2 }}>Tel: {p.clienteTel}</div>}
+            </div>
+            <div style={{ padding:"18px 32px" }}>
+              <div style={{ fontSize:8,color:C.gray2,letterSpacing:3,fontWeight:700,marginBottom:8 }}>VEHÍCULO</div>
+              <div style={{ fontSize:15,fontWeight:700,color:C.white,letterSpacing:1 }}>{p.patente||"-"}</div>
+              <div style={{ fontSize:12,color:C.gray2,marginTop:3 }}>{[p.marca,p.modelo,p.anio].filter(Boolean).join(" ")||"-"}</div>
+              {p.codigoColor&&<div style={{ fontSize:11,color:C.gray2,marginTop:2 }}>Color: {p.codigoColor}</div>}
+            </div>
+          </div>
+
+          {/* Tabla ítems */}
+          <div style={{ padding:"0 32px 0" }}>
+            {/* Header tabla */}
+            <div style={{ display:"grid",gridTemplateColumns:"3fr 1fr 1fr 1fr",gap:0,
+              background:C.red,padding:"8px 12px",marginTop:0 }}>
+              {["DESCRIPCIÓN DEL SERVICIO","CANT.","PRECIO UNIT.","TOTAL"].map((h,i)=>(
+                <div key={h} style={{ fontSize:8,fontWeight:700,letterSpacing:2,color:C.white,
+                  textAlign:i>0?"right":"left" }}>{h}</div>
+              ))}
+            </div>
+            {(p.items||[]).length===0
+              ? <div style={{ padding:"20px 12px",color:C.gray2,fontSize:12,textAlign:"center",
+                  borderBottom:`1px solid ${C.border}` }}>Sin ítems</div>
+              : (p.items||[]).map((it,i)=>{
+                  const tot=Number(it.cantidad||0)*Number(it.precioUnit||0);
+                  return <div key={i} style={{ display:"grid",gridTemplateColumns:"3fr 1fr 1fr 1fr",gap:0,
+                    padding:"10px 12px",background:i%2===0?"#0A0A0A":"#111",
+                    borderBottom:`1px solid ${C.border}` }}>
+                    <div style={{ fontSize:13,color:C.white }}>{it.descripcion||"-"}</div>
+                    <div style={{ fontSize:12,color:C.gray1,textAlign:"right" }}>{it.cantidad||0}</div>
+                    <div style={{ fontSize:12,color:C.gray1,textAlign:"right" }}>{formatCLP(it.precioUnit)}</div>
+                    <div style={{ fontSize:13,fontWeight:700,color:C.yellow,textAlign:"right" }}>{formatCLP(tot)}</div>
+                  </div>;
+                })
+            }
+
+            {/* Total */}
+            <div style={{ display:"flex",justifyContent:"flex-end",alignItems:"center",gap:20,
+              padding:"16px 12px",background:"#000",borderTop:`2px solid ${C.red}` }}>
+              <span style={{ fontSize:10,color:C.gray2,letterSpacing:3,fontWeight:700 }}>TOTAL PRESUPUESTO</span>
+              <span style={{ fontSize:28,fontWeight:900,color:C.yellow }}>{formatCLP(subtotal)}</span>
+            </div>
+          </div>
+
+          {/* Notas */}
+          {p.notas&&<div style={{ margin:"0 32px 0",padding:"14px 16px",
+            background:"#0A0A0A",borderLeft:`3px solid ${C.border}`,borderTop:`1px solid ${C.border}` }}>
+            <div style={{ fontSize:8,color:C.gray2,letterSpacing:3,fontWeight:700,marginBottom:6 }}>NOTAS Y CONDICIONES</div>
+            <div style={{ fontSize:12,color:C.gray1,lineHeight:1.6 }}>{p.notas}</div>
+          </div>}
+
+          {/* Footer */}
+          <div style={{ background:"#000",borderTop:`1px solid ${C.border}`,padding:"12px 32px",
+            textAlign:"center",marginTop:0 }}>
+            <div style={{ fontSize:9,color:C.gray3,letterSpacing:1 }}>
+              Presupuesto generado por Vergara y CIA - Sistema de Gestión
+            </div>
+            <div style={{ fontSize:9,color:C.gray3,marginTop:2 }}>
+              Válido por {p.validez||30} días desde la fecha de emisión
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>;
+}
+
+// -- MAIN APP ---------------------------------------------------------------
+function App() {
+  const [tab,setTab]=useState("trabajos");
+  const [data,setData]=useState(()=>localLoad());
+  const [modalTrabajo,setModalTrabajo]=useState(null);
+  const [modalGasto,setModalGasto]=useState(null);
+  const [modalTecnico,setModalTecnico]=useState(null);
+  const [modalPresupuesto,setModalPresupuesto]=useState(null);
+  const [verPresupuesto,setVerPresupuesto]=useState(null);
+  const [verTrabajo,setVerTrabajo]=useState(null);
+  const [filtroMes,setFiltroMes]=useState(()=>{const n=new Date();return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,"0")}`;});
+
+  useEffect(()=>{
+    let bc;
+    try{ bc=new BroadcastChannel("taller_v3_data"); bc.onmessage=()=>setData(localLoad()); }catch{}
+    const onS=()=>setData(localLoad());
+    window.addEventListener("storage",onS);
+    return()=>{ if(bc)bc.close(); window.removeEventListener("storage",onS); };
+  },[]);
+
+  function updateData(d){ setData(d); localSave(d); }
+  function saveTrabajo(t){
+    updateData(t.id?{...data,trabajos:data.trabajos.map(x=>x.id===t.id?t:x)}:{...data,trabajos:[{...t,id:Date.now().toString()},...data.trabajos]});
+    setModalTrabajo(null);
+  }
+  function deleteTrabajo(id){ if(!confirm("¿Eliminar este trabajo?"))return; updateData({...data,trabajos:data.trabajos.filter(x=>x.id!==id)}); setVerTrabajo(null); }
+  function saveGasto(g){
+    updateData(g.id?{...data,gastos:data.gastos.map(x=>x.id===g.id?g:x)}:{...data,gastos:[{...g,id:Date.now().toString()},...data.gastos]});
+    setModalGasto(null);
+  }
+  function deleteGasto(id){ if(!confirm("¿Eliminar?"))return; updateData({...data,gastos:data.gastos.filter(x=>x.id!==id)}); }
+  function saveTecnico(tc){
+    updateData(tc.id?{...data,tecnicos:data.tecnicos.map(x=>x.id===tc.id?tc:x)}:{...data,tecnicos:[{...tc,id:Date.now().toString()},...data.tecnicos]});
+    setModalTecnico(null);
+  }
+  function deleteTecnico(id){ if(!confirm("¿Eliminar técnico?"))return; updateData({...data,tecnicos:data.tecnicos.filter(x=>x.id!==id)}); }
+  function savePresupuesto(p){
+    updateData(p.id?{...data,presupuestos:data.presupuestos.map(x=>x.id===p.id?p:x)}:{...data,presupuestos:[{...p,id:Date.now().toString()},...data.presupuestos]});
+    setModalPresupuesto(null);
+  }
+  function deletePresupuesto(id){ if(!confirm("¿Eliminar presupuesto?"))return; updateData({...data,presupuestos:data.presupuestos.filter(x=>x.id!==id)}); }
+
+  const gastosMes=data.gastos.filter(g=>g.fecha&&g.fecha.startsWith(filtroMes));
+  const gTrabajo=gastosMes.filter(g=>g.tipo==="trabajo");
+  const gPersonal=gastosMes.filter(g=>g.tipo==="personal");
+  const activos=data.trabajos.filter(t=>t.estado!=="entregado");
+  const entregados=data.trabajos.filter(t=>t.estado==="entregado");
+  const pendTotal=data.trabajos.reduce((a,t)=>a+Number(t.pendiente||0),0);
+  function calcTotalTecnico(tc){
+    return tc.totalComision||(((tc.asignaciones||[])).reduce((s,a)=>{
+      const tj=data.trabajos.find(t=>t.id===a.trabajoId);
+      return s+(Number((tj&&tj.totalCobrar)||0)*Number(a.porcentaje||0))/100;
+    },0));
+  }
+  const PSTADO={ borrador:["BORRADOR",C.gray2],enviado:["ENVIADO",C.blue],aprobado:["APROBADO",C.green],rechazado:["RECHAZADO",C.red] };
+
+  const TABS=[
+    ["trabajos",<Icon.car/>,"TRABAJOS"],
+    ["gastos",<Icon.money/>,"FINANZAS"],
+    ["tecnicos",<Icon.team/>,"TÉCNICOS"],
+    ["presupuestos",<Icon.doc/>,"PRESUPUESTOS"],
+    ["resumen",<Icon.chart/>,"RESUMEN"],
+  ];
+
+  return <div style={{ minHeight:"100vh",background:C.black,color:C.white,fontFamily:"Arial,Helvetica,sans-serif",fontSize:14 }}>
+    {/* HEADER */}
+    <header style={{ background:C.surface,borderBottom:`2px solid ${C.red}`,position:"sticky",top:0,zIndex:50 }}>
+      <div style={{ maxWidth:1200,margin:"0 auto",padding:"0 20px",display:"flex",alignItems:"center",
+        justifyContent:"space-between",height:56,flexWrap:"wrap",gap:6 }}>
+        <div style={{ display:"flex",alignItems:"center",gap:12 }}>
+          <div style={{ width:36,height:36,background:C.red,display:"flex",alignItems:"center",justifyContent:"center" }}>
+            <Icon.wrench/>
+          </div>
+          <div>
+            <div style={{ fontWeight:700,fontSize:13,letterSpacing:2,color:C.white }}>VERGARA Y CIA</div>
+            <div style={{ fontSize:9,color:C.gray2,letterSpacing:4 }}>SISTEMA DE GESTIÓN</div>
+          </div>
+        </div>
+        <nav style={{ display:"flex",gap:2 }}>
+          {TABS.map(([id,ico,label])=>(
+            <button key={id} onClick={()=>setTab(id)} style={{ display:"flex",alignItems:"center",gap:5,
+              padding:"6px 12px",border:"none",cursor:"pointer",
+              background:tab===id?C.red:"transparent",
+              color:tab===id?C.white:C.gray2,
+              fontFamily:"Arial,sans-serif",fontSize:10,fontWeight:700,letterSpacing:1.5,transition:"all 0.15s",
+              whiteSpace:"nowrap" }}>
+              {ico}{label}
+            </button>
+          ))}
+        </nav>
+        <div style={{ fontSize:10,color:C.gray2 }}>Vergara y CIA</div>
+      </div>
+      <div style={{ height:1,background:`linear-gradient(90deg,${C.red},transparent)` }}/>
+    </header>
+
+    <main style={{ maxWidth:1200,margin:"0 auto",padding:"28px 20px" }}>
+
+      {/* == TRABAJOS == */}
+      {tab==="trabajos"&&<div>
+        <div style={{ display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:2,marginBottom:28,border:`1px solid ${C.border}` }}>
+          <StatBar label="TRABAJOS ACTIVOS" val={activos.length} color={C.red} sub={`${entregados.length} entregados`}/>
+          <StatBar label="PENDIENTE COBRO" val={formatCLP(pendTotal)} color={C.yellow} sub="monto por cobrar"/>
+          <StatBar label="TOTAL REGISTROS" val={data.trabajos.length} color={C.gray1} sub="órdenes en sistema"/>
+        </div>
+        <SectionHeader title="ÓRDENES DE TRABAJO" action={<Btn red onClick={()=>setModalTrabajo({})}><Icon.plus/> NUEVO TRABAJO</Btn>}/>
+        {data.trabajos.length===0
+          ? <Empty icon={<Icon.car/>} msg="No hay trabajos registrados"/>
+          : <div style={{ display:"flex",flexDirection:"column",gap:2 }}>
+              {data.trabajos.map(t=>{
+                const ESTADO={activo:["INGRESADO",C.red],proceso:["EN PROCESO",C.yellow],listo:["LISTO",C.green],entregado:["ENTREGADO",C.gray2]};
+                const [lbl,col]=ESTADO[t.estado]||["-",C.gray2];
+                return <div key={t.id} style={{ background:C.card,borderLeft:`3px solid ${col}`,
+                  display:"flex",alignItems:"stretch",border:`1px solid ${C.border}` }}>
+                  <div onClick={()=>setVerTrabajo(t)} style={{ width:100,padding:"14px 16px",borderRight:`1px solid ${C.border}`,flexShrink:0,cursor:"pointer" }}>
+                    <div style={{ fontSize:14,fontWeight:700,letterSpacing:2 }}>{t.patente||"-"}</div>
+                    <div style={{ fontSize:10,color:C.gray2,marginTop:2 }}>N° {t.nroTrabajo||"-"}</div>
+                  </div>
+                  <div onClick={()=>setVerTrabajo(t)} style={{ flex:1,padding:"14px 16px",borderRight:`1px solid ${C.border}`,cursor:"pointer" }}>
+                    <div style={{ fontSize:13,fontWeight:600 }}>{[t.marca,t.modelo,t.anio].filter(Boolean).join(" ")||"Sin datos"}</div>
+                    {t.codigoColor&&<div style={{ fontSize:11,color:C.gray2,marginTop:2 }}>Color: {t.codigoColor}</div>}
+                    {t.tipoServicio&&<div style={{ fontSize:11,color:C.gray2 }}>{t.tipoServicio}</div>}
+                  </div>
+                  <div onClick={()=>setVerTrabajo(t)} style={{ flex:1,padding:"14px 16px",borderRight:`1px solid ${C.border}`,cursor:"pointer" }}>
+                    <div style={{ fontSize:13,fontWeight:600 }}>{t.clienteNombre||"Sin nombre"}</div>
+                    <div style={{ fontSize:11,color:C.gray2,marginTop:2 }}>{t.clienteTel||""}</div>
+                  </div>
+                  <div onClick={()=>setVerTrabajo(t)} style={{ width:120,padding:"14px 14px",borderRight:`1px solid ${C.border}`,flexShrink:0,cursor:"pointer" }}>
+                    <div style={{ fontSize:9,color:C.gray2,letterSpacing:1 }}>ENTREGA EST.</div>
+                    <div style={{ fontSize:12,marginTop:1,color:C.yellow }}>{formatDate(t.fechaEntrega)}</div>
+                  </div>
+                  <div onClick={()=>setVerTrabajo(t)} style={{ width:140,padding:"14px 14px",borderRight:`1px solid ${C.border}`,flexShrink:0,textAlign:"right",cursor:"pointer" }}>
+                    <div style={{ fontSize:9,color:C.gray2,letterSpacing:1 }}>PENDIENTE</div>
+                    <div style={{ fontSize:15,fontWeight:700,color:C.yellow,marginTop:2 }}>{formatCLP(t.pendiente)}</div>
+                    {Number(t.abono)>0&&<div style={{ fontSize:10,color:C.green,marginTop:2 }}>Abono: {formatCLP(t.abono)}</div>}
+                  </div>
+                  <div style={{ width:130,padding:"14px 14px",flexShrink:0,display:"flex",flexDirection:"column",alignItems:"flex-end",gap:8 }}>
+                    <span style={{ fontSize:9,fontWeight:700,letterSpacing:1.5,color:col,border:`1px solid ${col}`,padding:"3px 8px" }}>{lbl}</span>
+                    <div style={{ display:"flex",gap:4 }}>
+                      <IcoBtn color={C.gray1} onClick={()=>setModalTrabajo(t)}><Icon.edit/></IcoBtn>
+                      <IcoBtn color={C.red} onClick={()=>deleteTrabajo(t.id)}><Icon.trash/></IcoBtn>
+                    </div>
+                  </div>
+                </div>;
+              })}
+            </div>
+        }
+      </div>}
+
+      {/* == GASTOS == */}
+      {tab==="gastos"&&<div>
+        <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20,flexWrap:"wrap",gap:12 }}>
+          <div style={{ display:"flex",alignItems:"center",gap:12 }}>
+            <div style={{ width:3,height:20,background:C.red }}/>
+            <span style={{ fontWeight:700,fontSize:13,letterSpacing:2 }}>REGISTRO DE GASTOS</span>
+          </div>
+          <div style={{ display:"flex",gap:10,alignItems:"center" }}>
+            <input type="month" value={filtroMes} onChange={e=>setFiltroMes(e.target.value)} style={inputSt()}/>
+            <Btn red onClick={()=>setModalGasto({})}><Icon.plus/> AGREGAR GASTO</Btn>
+          </div>
+        </div>
+        <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:2,marginBottom:20 }}>
+          <StatBar label="GASTOS DE TRABAJO" val={formatCLP(gTrabajo.reduce((a,g)=>a+Number(g.monto||0),0))} color={C.red} sub={`${gTrabajo.length} registros este mes`}/>
+          <StatBar label="GASTOS PERSONALES" val={formatCLP(gPersonal.reduce((a,g)=>a+Number(g.monto||0),0))} color={C.blue} sub={`${gPersonal.length} registros este mes`}/>
+        </div>
+        <GastoTable title="GASTOS DE TRABAJO" gastos={gTrabajo} color={C.red} onEdit={setModalGasto} onDelete={deleteGasto}/>
+        <div style={{ height:12 }}/>
+        <GastoTable title="GASTOS PERSONALES" gastos={gPersonal} color={C.blue} onEdit={setModalGasto} onDelete={deleteGasto}/>
+      </div>}
+
+      {/* == TÉCNICOS == */}
+      {tab==="tecnicos"&&<div>
+        <div style={{ display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:2,marginBottom:28,border:`1px solid ${C.border}` }}>
+          <StatBar label="TÉCNICOS REGISTRADOS" val={data.tecnicos.length} color={C.red} sub="en el sistema"/>
+          <StatBar label="TOTAL COMISIONES" val={formatCLP(data.tecnicos.reduce((s,tc)=>s+calcTotalTecnico(tc),0))} color={C.green} sub="monto total ganado"/>
+          <StatBar label="SALDO POR PAGAR" val={formatCLP(data.tecnicos.reduce((s,tc)=>s+(tc.saldoPendiente||0),0))} color={C.yellow} sub="pendiente de pago"/>
+        </div>
+        <SectionHeader title="REGISTRO DE TÉCNICOS" action={<Btn red onClick={()=>setModalTecnico({})}><Icon.plus/> NUEVO TÉCNICO</Btn>}/>
+        {data.tecnicos.length===0
+          ? <Empty icon={<Icon.team/>} msg="No hay técnicos registrados"/>
+          : <div style={{ display:"flex",flexDirection:"column",gap:2 }}>
+              {data.tecnicos.map(tc=>(
+                <TecnicoCard key={tc.id} tc={tc} trabajos={data.trabajos}
+                  onEdit={()=>setModalTecnico(tc)} onDelete={()=>deleteTecnico(tc.id)}/>
+              ))}
+            </div>
+        }
+      </div>}
+
+      {/* == PRESUPUESTOS == */}
+      {tab==="presupuestos"&&<div>
+        <div style={{ display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:2,marginBottom:28,border:`1px solid ${C.border}` }}>
+          <StatBar label="TOTAL PRESUPUESTOS" val={data.presupuestos.length} color={C.purple} sub="en el sistema"/>
+          <StatBar label="APROBADOS" val={data.presupuestos.filter(p=>p.estado==="aprobado").length} color={C.green} sub="presupuestos aceptados"/>
+          <StatBar label="ENVIADOS" val={data.presupuestos.filter(p=>p.estado==="enviado").length} color={C.blue} sub="esperando respuesta"/>
+          <StatBar label="MONTO TOTAL" val={formatCLP(data.presupuestos.reduce((s,p)=>s+Number(p.subtotal||0),0))} color={C.yellow} sub="valor cotizado"/>
+        </div>
+        <SectionHeader title="PRESUPUESTOS" action={<Btn red onClick={()=>setModalPresupuesto({})}><Icon.plus/> NUEVO PRESUPUESTO</Btn>}/>
+        {data.presupuestos.length===0
+          ? <Empty icon={<Icon.doc/>} msg="No hay presupuestos registrados"/>
+          : <div style={{ display:"flex",flexDirection:"column",gap:2 }}>
+              {data.presupuestos.map(p=>{
+                const [elbl,ecol]=PSTADO[p.estado]||["-",C.gray2];
+                return <div key={p.id} style={{ background:C.card,borderLeft:`3px solid ${ecol}`,
+                  display:"flex",alignItems:"stretch",border:`1px solid ${C.border}` }}>
+                  <div style={{ width:90,padding:"14px 16px",borderRight:`1px solid ${C.border}`,flexShrink:0 }}>
+                    <div style={{ fontSize:13,fontWeight:700 }}>{p.nro||"-"}</div>
+                    <div style={{ fontSize:10,color:C.gray2,marginTop:2 }}>{formatDate(p.fecha)}</div>
+                  </div>
+                  <div style={{ flex:1,padding:"14px 16px",borderRight:`1px solid ${C.border}` }}>
+                    <div style={{ fontSize:13,fontWeight:600 }}>{p.clienteNombre||"Sin nombre"}</div>
+                    <div style={{ fontSize:11,color:C.gray2,marginTop:2 }}>{p.clienteTel} {p.clienteRut&&`. ${p.clienteRut}`}</div>
+                  </div>
+                  <div style={{ flex:1,padding:"14px 16px",borderRight:`1px solid ${C.border}` }}>
+                    <div style={{ fontSize:13,fontWeight:600 }}>{[p.patente,p.marca,p.modelo].filter(Boolean).join(" ")||"-"}</div>
+                    {p.codigoColor&&<div style={{ fontSize:11,color:C.gray2,marginTop:2 }}>Color: {p.codigoColor}</div>}
+                  </div>
+                  <div style={{ width:100,padding:"14px 14px",borderRight:`1px solid ${C.border}`,flexShrink:0 }}>
+                    <div style={{ fontSize:9,color:C.gray2,letterSpacing:1 }}>ÍTEMS</div>
+                    <div style={{ fontSize:16,fontWeight:700,color:C.gray1,marginTop:2 }}>{(p.items||[]).length}</div>
+                  </div>
+                  <div style={{ width:150,padding:"14px 14px",borderRight:`1px solid ${C.border}`,flexShrink:0,textAlign:"right" }}>
+                    <div style={{ fontSize:9,color:C.gray2,letterSpacing:1 }}>TOTAL</div>
+                    <div style={{ fontSize:16,fontWeight:700,color:C.yellow,marginTop:2 }}>{formatCLP(p.subtotal)}</div>
+                  </div>
+                  <div style={{ width:130,padding:"14px 14px",flexShrink:0,display:"flex",flexDirection:"column",alignItems:"flex-end",gap:8 }}>
+                    <span style={{ fontSize:9,fontWeight:700,letterSpacing:1.5,color:ecol,border:`1px solid ${ecol}`,padding:"3px 8px" }}>{elbl}</span>
+                    <div style={{ display:"flex",gap:4 }}>
+                      <IcoBtn color={C.blue} onClick={()=>setVerPresupuesto(p)} title="Vista previa"><Icon.eye/></IcoBtn>
+                      <IcoBtn color={C.gray1} onClick={()=>setModalPresupuesto(p)}><Icon.edit/></IcoBtn>
+                      <IcoBtn color={C.red} onClick={()=>deletePresupuesto(p.id)}><Icon.trash/></IcoBtn>
+                    </div>
+                  </div>
+                </div>;
+              })}
+            </div>
+        }
+      </div>}
+
+      {/* == RESUMEN == */}
+      {tab==="resumen"&&(()=>{
+        const gMes=data.gastos.filter(g=>g.fecha&&g.fecha.startsWith(filtroMes));
+        const totT=gMes.filter(g=>g.tipo==="trabajo").reduce((a,g)=>a+Number(g.monto||0),0);
+        const totP=gMes.filter(g=>g.tipo==="personal").reduce((a,g)=>a+Number(g.monto||0),0);
+        const totalFac=data.trabajos.reduce((a,t)=>a+Number(t.totalCobrar||0),0);
+        const abonoFac=data.trabajos.reduce((a,t)=>a+Number(t.abono||0),0);
+        const pendFac=data.trabajos.reduce((a,t)=>a+Number(t.pendiente||0),0);
+        const catT={};gMes.filter(g=>g.tipo==="trabajo").forEach(g=>catT[g.categoria]=(catT[g.categoria]||0)+Number(g.monto||0));
+        const catP={};gMes.filter(g=>g.tipo==="personal").forEach(g=>catP[g.categoria]=(catP[g.categoria]||0)+Number(g.monto||0));
+        const totalCom=data.tecnicos.reduce((s,tc)=>s+calcTotalTecnico(tc),0);
+        const saldoCom=data.tecnicos.reduce((s,tc)=>s+(tc.saldoPendiente||0),0);
+        const totalPres=data.presupuestos.reduce((s,p)=>s+Number(p.subtotal||0),0);
+        const presAprobados=data.presupuestos.filter(p=>p.estado==="aprobado").reduce((s,p)=>s+Number(p.subtotal||0),0);
+        return <div style={{ display:"flex",flexDirection:"column",gap:20 }}>
+          <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center" }}>
+            <div style={{ display:"flex",alignItems:"center",gap:12 }}>
+              <div style={{ width:3,height:20,background:C.red }}/>
+              <span style={{ fontWeight:700,fontSize:13,letterSpacing:2 }}>RESUMEN FINANCIERO</span>
+            </div>
+            <input type="month" value={filtroMes} onChange={e=>setFiltroMes(e.target.value)} style={inputSt()}/>
+          </div>
+          {/* Facturación */}
+          <div style={{ background:C.card,borderLeft:`3px solid ${C.red}`,padding:"20px 24px" }}>
+            <div style={{ fontSize:9,color:C.gray2,letterSpacing:2,marginBottom:16 }}>FACTURACIÓN GLOBAL</div>
+            <div style={{ display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:20 }}>
+              {[["TOTAL COTIZADO",totalFac,C.gray1],["ABONADO",abonoFac,C.green],["PENDIENTE",pendFac,C.yellow]].map(([l,v,c])=>(
+                <div key={l}><div style={{ fontSize:9,color:C.gray2,letterSpacing:2 }}>{l}</div>
+                  <div style={{ fontSize:28,fontWeight:700,color:c,marginTop:4 }}>{formatCLP(v)}</div></div>
+              ))}
+            </div>
+          </div>
+          {/* Presupuestos */}
+          <div style={{ background:C.card,borderLeft:`3px solid ${C.purple}`,padding:"20px 24px" }}>
+            <div style={{ fontSize:9,color:C.gray2,letterSpacing:2,marginBottom:16 }}>PRESUPUESTOS</div>
+            <div style={{ display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:20 }}>
+              {[["TOTAL COTIZADO",totalPres,C.purple],["APROBADOS",presAprobados,C.green],["CANTIDAD",data.presupuestos.length+" pres.",C.gray1]].map(([l,v,c])=>(
+                <div key={l}><div style={{ fontSize:9,color:C.gray2,letterSpacing:2 }}>{l}</div>
+                  <div style={{ fontSize:24,fontWeight:700,color:c,marginTop:4 }}>{typeof v==="number"?formatCLP(v):v}</div></div>
+              ))}
+            </div>
+          </div>
+          {/* Gastos */}
+          <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:16 }}>
+            <CatPanel title="GASTOS DE TRABAJO" cats={catT} total={totT} color={C.red}/>
+            <CatPanel title="GASTOS PERSONALES" cats={catP} total={totP} color={C.blue}/>
+          </div>
+          {/* Técnicos */}
+          <div>
+            <div style={{ display:"flex",alignItems:"center",gap:12,marginBottom:12 }}>
+              <div style={{ width:3,height:20,background:C.red }}/>
+              <span style={{ fontWeight:700,fontSize:13,letterSpacing:2 }}>COMISIONES DE TÉCNICOS</span>
+            </div>
+            <div style={{ display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:2,marginBottom:12,border:`1px solid ${C.border}` }}>
+              <StatBar label="TÉCNICOS" val={data.tecnicos.length} color={C.red}/>
+              <StatBar label="TRABAJOS ASIGNADOS" val={data.tecnicos.reduce((s,tc)=>s+((tc.asignaciones||[])).length,0)} color={C.gray1}/>
+              <StatBar label="TOTAL COMISIONES" val={formatCLP(totalCom)} color={C.green}/>
+              <StatBar label="SALDO POR PAGAR" val={formatCLP(saldoCom)} color={C.yellow}/>
+            </div>
+            {data.tecnicos.length===0
+              ? <div style={{ background:C.card,border:`1px solid ${C.border}`,padding:24,textAlign:"center",color:C.gray2,fontSize:12 }}>Sin técnicos registrados</div>
+              : <div style={{ border:`1px solid ${C.border}` }}>
+                  <div style={{ display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1fr 1fr",background:C.surface,padding:"8px 18px",borderBottom:`1px solid ${C.border}` }}>
+                    {["TÉCNICO","TRABAJOS","% PROM.","COMISIÓN TOTAL","SALDO PENDIENTE"].map(h=>(
+                      <div key={h} style={{ fontSize:9,color:C.gray2,letterSpacing:1.5,fontWeight:700 }}>{h}</div>
+                    ))}
+                  </div>
+                  {data.tecnicos.map(tc=>{
+                    const tot=calcTotalTecnico(tc);
+                    const asis=(tc.asignaciones||[]);
+                    const prom=asis.length>0?(asis.reduce((s,a)=>s+Number(a.porcentaje||0),0)/asis.length).toFixed(1):"-";
+                    const saldo=tc.saldoPendiente||0;
+                    return <div key={tc.id}>
+                      <div style={{ display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1fr 1fr",
+                        padding:"12px 18px",borderBottom:`1px solid ${C.border}`,alignItems:"center" }}
+                        className="row-hover">
+                        <div style={{ display:"flex",alignItems:"center",gap:10 }}>
+                          <div style={{ width:30,height:30,background:C.red,display:"flex",alignItems:"center",
+                            justifyContent:"center",flexShrink:0,fontSize:13,fontWeight:700,color:C.white }}>
+                            {(tc.nombre||"?")[0].toUpperCase()}
+                          </div>
+                          <div>
+                            <div style={{ fontSize:13,fontWeight:700 }}>{tc.nombre}</div>
+                            <div style={{ fontSize:10,color:C.gray2 }}>{tc.especialidad||"-"}</div>
+                          </div>
+                        </div>
+                        <div style={{ fontSize:18,fontWeight:700,color:C.gray1 }}>{asis.length}</div>
+                        <div><span style={{ background:C.red+"22",color:C.red,border:`1px solid ${C.red}44`,
+                          padding:"2px 8px",fontSize:11,fontWeight:700 }}>{prom}{prom!=="-"?"%":""}</span></div>
+                        <div style={{ fontSize:16,fontWeight:700,color:C.green }}>{formatCLP(tot)}</div>
+                        <div style={{ fontSize:16,fontWeight:700,color:C.yellow }}>{formatCLP(saldo)}</div>
+                      </div>
+                      {asis.map((a,i)=>{
+                        const tj=data.trabajos.find(t=>t.id===a.trabajoId);
+                        if(!tj)return null;
+                        const m=(Number(tj.totalCobrar||0)*Number(a.porcentaje||0))/100;
+                        return <div key={i} style={{ display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1fr 1fr",
+                          padding:"7px 18px 7px 58px",background:C.surface,borderBottom:`1px solid ${C.border}`,alignItems:"center" }}
+                          className="row-hover">
+                          <div>
+                            <span style={{ fontSize:10,fontWeight:700,color:C.gray2 }}>{tj.nroTrabajo||tj.patente||"-"}</span>
+                            <span style={{ fontSize:10,color:C.gray2,marginLeft:8 }}>{a.descripcionTrabajo||tj.tipoServicio||"-"}</span>
+                            <div style={{ fontSize:9,color:C.gray3,marginTop:1 }}>{[tj.marca,tj.modelo].filter(Boolean).join(" ")} . {tj.clienteNombre}</div>
+                          </div>
+                          <div style={{ fontSize:10,color:C.gray2 }}>{tj.patente}</div>
+                          <div style={{ fontSize:10,color:C.red,fontWeight:700 }}>{a.porcentaje}%</div>
+                          <div style={{ fontSize:12,fontWeight:700,color:C.green }}>{formatCLP(m)}</div>
+                          <div style={{ fontSize:11,color:C.gray2 }}>{a.tiempoEstimado||"-"} / {a.tiempoReal||"-"}</div>
+                        </div>;
+                      })}
+                    </div>;
+                  })}
+                  <div style={{ display:"flex",justifyContent:"flex-end",alignItems:"center",gap:20,
+                    padding:"12px 18px",background:C.card,borderTop:`2px solid ${C.border}` }}>
+                    <span style={{ fontSize:9,color:C.gray2,letterSpacing:2 }}>TOTAL COMISIONES</span>
+                    <span style={{ fontSize:20,fontWeight:700,color:C.green }}>{formatCLP(totalCom)}</span>
+                    <span style={{ fontSize:9,color:C.gray2,letterSpacing:2 }}>SALDO POR PAGAR</span>
+                    <span style={{ fontSize:20,fontWeight:700,color:C.yellow }}>{formatCLP(saldoCom)}</span>
+                  </div>
+                </div>
+            }
+          </div>
+        </div>;
+      })()}
+
+    </main>
+
+    {modalTrabajo!==null&&<ModalTrabajo trabajo={modalTrabajo} onSave={saveTrabajo} onClose={()=>setModalTrabajo(null)}/>}
+    {modalGasto!==null&&<ModalGasto gasto={modalGasto} onSave={saveGasto} onClose={()=>setModalGasto(null)}/>}
+    {modalTecnico!==null&&<ModalTecnico tecnico={modalTecnico} trabajos={data.trabajos} onSave={saveTecnico} onClose={()=>setModalTecnico(null)}/>}
+    {modalPresupuesto!==null&&<ModalPresupuesto presupuesto={modalPresupuesto} onSave={savePresupuesto} onClose={()=>setModalPresupuesto(null)}/>}
+    {verPresupuesto!==null&&<VistaPresupuesto p={verPresupuesto} onClose={()=>setVerPresupuesto(null)} onEdit={()=>{setModalPresupuesto(verPresupuesto);setVerPresupuesto(null);}}/>}
+    {verTrabajo!==null&&<DetalleTrabajo t={verTrabajo} onClose={()=>setVerTrabajo(null)}
+      onEdit={()=>{setModalTrabajo(verTrabajo);setVerTrabajo(null);}}
+      onDelete={()=>deleteTrabajo(verTrabajo.id)}/>}
+  </div>;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+<script>
+if('serviceWorker' in navigator){
+  window.addEventListener('load',()=>{ navigator.serviceWorker.register('sw.js').catch(()=>{}); });
+}
+</script>
+</body>
+</html>
